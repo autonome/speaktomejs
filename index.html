@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>SpeakToMe Component - Basic</title>
+    <meta name="description" content="Example usage of SpeakToMe API component."></meta>
+  </head>
+  <body>
+
+    <section>
+      <h1>SpeakToMe - Speech Recognition API from Mozilla</h1>
+      <section>
+        <div>
+          <button id="mic">Click me and say something</button>
+        </div>
+        <div class="results">
+        </div>
+      </section>
+    </section>
+
+<script src="stm.js"></script>
+<script src="stm_vad.js"></script>
+<script src="webrtc_vad.js"></script>
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    // Initialize
+    var stm = SpeakToMe();
+
+    // Set a handler for results
+    stm.setResultHandler(function(data) {
+      console.log(data);
+
+      if (data.length > 0) {
+        var resultsView = document.querySelector('.results');
+        data.forEach(function(result) {
+          resultsView.innerHTML += '"' + result.text +
+            '", confidence: ' + result.confidence + '<br>';
+        });
+      }
+    });
+
+    document.querySelector('#mic').addEventListener('click', stm.start);
+  });
+</script>
+</body>
+</html>
