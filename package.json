@@ -1,0 +1,28 @@
+{
+  "name": "speaktomejs",
+  "version": "0.1.0",
+  "description": "JS module for Mozilla's cloud speech recognition API",
+  "main": "stm.js",
+  "scripts": {
+    "bundle": "browserify src/stm.js src/stm_vad.js -s SpeakToMe -o build/stm.js",
+    "uglify": "uglifyjs build/stm.js -cm > build/stm.min.js",
+    "web": "uglifyjs src/stm.js src/stm_vad.js -cm > build/stm_web.min.js",
+    "build": "npm run bundle && npm run uglify && npm run web && cp src/webrtc_vad.js build/",
+    "test": "echo \"Error: no test specified\" && exit 1"
+	},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/autonome/speaktomejs.git"
+  },
+  "keywords": [
+    "Mozilla",
+    "Speech",
+    "Recognition"
+  ],
+  "author": "Dietrich Ayala <autonome@gmail.com> (http://metafluff.com)",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/autonome/speaktomejs/issues"
+  },
+  "homepage": "https://github.com/autonome/speaktomejs#readme"
+}

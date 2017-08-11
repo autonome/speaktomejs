@@ -9,37 +9,62 @@
 
     <section>
       <h1>SpeakToMe - Speech Recognition API from Mozilla</h1>
+
       <section>
-        <div>
-          <button id="mic">Click me and say something</button>
-        </div>
+        <input class="test" type="text"></input>
+        <button id="mic">Say it</button>
+      </section>
+
+      <section>
         <div class="results">
         </div>
       </section>
     </section>
 
-<script src="stm.js"></script>
-<script src="stm_vad.js"></script>
-<script src="webrtc_vad.js"></script>
+<!--
+<script src="src/stm.js"></script>
+<script src="src/stm_vad.js"></script>
+-->
+<script src="build/stm_web.min.js"></script>
+<script src="build/webrtc_vad.js"></script>
 <script>
   document.addEventListener('DOMContentLoaded', function() {
+
     // Initialize
-    var stm = SpeakToMe();
+    var stm = SpeakToMe({
+      listener: listener
+    });
 
     // Set a handler for results
-    stm.setResultHandler(function(data) {
-      console.log(data);
+    function listener(msg) {
+      console.log('listener', msg);
 
-      if (data.length > 0) {
+      if (msg.data && msg.data.length > 0) {
+        var results = msg.data.sort(function(a, b) { a.confidence - b.confidence; });
         var resultsView = document.querySelector('.results');
-        data.forEach(function(result) {
+        results.forEach(function(result) {
           resultsView.innerHTML += '"' + result.text +
             '", confidence: ' + result.confidence + '<br>';
         });
       }
+    }
+
+    //document.querySelector('#mic').addEventListener('click', stm.listen);
+
+    // Hack a test
+    function say(text) {
+      var synth = window.speechSynthesis;
+      var utterThis = new SpeechSynthesisUtterance(text);
+      synth.speak(utterThis);
+    }
+
+    document.querySelector('#mic').addEventListener('click', function() {
+      stm.listen();
+      setTimeout(function() {
+        say(document.querySelector('.test').value);
+      }, 3000);
     });
 
-    document.querySelector('#mic').addEventListener('click', stm.start);
   });
 </script>
 </body>
