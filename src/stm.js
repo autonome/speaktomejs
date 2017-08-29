@@ -2,7 +2,7 @@
 
 TODO:
 
-* support multiple listen() (check state)
+* support start/stop listen cycles
 * support manual stop listening (overrides others, has timeout)
 * support continuous (throttle api calls)
 * break out API separate from web, for node env module
@@ -82,21 +82,54 @@ function SpeakToMe(options) {
     }
   }
 
-  var states = [
-    'ready',
-    'listening',
-    'sending',
-    'waitingonserver',
-    'receiving'
-  ];
+  /*
 
-  // Lazy initialized in start()
+  States:
+
+  * ready: recorder inactive
+  * listening: recorder active
+  * sending: sending recording
+  * waitingonserver: sent recording, waiting for response
+  * result: received result
+
+  */
+  var state = 'ready';
+
+  // Lazy initialized in listen()
   var VAD = null;
 
+  // Recording bits
+  // initialized in listen, and destroyed
+  // in stopListening
+  var audioContext,
+      sourceNode,
+      analyzerNode,
+      outputNode,
+      scriptProcessor,
+      mediaRecorder,
+      mediaStream,
+      vadReason;
+
+  // Start recording
   function listen() {
+    // Callers should only listen after receiving
+    // the 'ready' state event, so we can ignore
+    // their requests if we're not ready.
+    if (state != 'ready') {
+      console.warn('Listen() called when not ready');
+      return;
+    }
+
     // Lazy init VAD on first-use
     if (config.vad && !VAD) {
-      VAD = SpeakToMeVAD.SpeakToMeVAD();
+      function onVADComplete(reason) {
+        //console.log('onVADComplete', reason);
+        vadReason = reason;
+        stopListening();
+      }
+      VAD = SpeakToMeVAD({
+        listener: onVADComplete
+      });
     }
 
     // Configure constraints
@@ -112,13 +145,14 @@ function SpeakToMe(options) {
   }
 
   function onStream(stream) {
-    messageListener({ state: 'listening'});
+    mediaStream = stream;
+    updateState({ state: 'listening'});
 
     // Build the WebAudio graph we'll be using
-    var audioContext = new AudioContext();
-    var sourceNode = audioContext.createMediaStreamSource(stream);
-    var analyzerNode = audioContext.createAnalyser();
-    var outputNode = audioContext.createMediaStreamDestination();
+    audioContext = new AudioContext();
+    sourceNode = audioContext.createMediaStreamSource(stream);
+    analyzerNode = audioContext.createAnalyser();
+    outputNode = audioContext.createMediaStreamDestination();
 
     // make sure we're doing mono everywhere
     sourceNode.channelCount = 1;
@@ -129,12 +163,10 @@ function SpeakToMe(options) {
     sourceNode.connect(analyzerNode);
     analyzerNode.connect(outputNode);
 
-    // So we can destroy it later
-    var scriptprocessor;
-
     if (config.vad) {
-      // VAD initializations
-      // console.log("Sample rate: ", audioContext.sampleRate);
+      // Reset last VAD reason
+      vadReason = '';
+
       var bufferSize = 2048;
       // create a javascript node
       scriptprocessor = audioContext.createScriptProcessor(
@@ -143,13 +175,6 @@ function SpeakToMe(options) {
       // Send audio events to VAD, which will call onVADComplete
       // when either voice input ends, none is detected, or neither (timeout).
       scriptprocessor.onaudioprocess = VAD.onAudioProcessingEvent;
-
-      // VAD result handler
-      function onVADComplete(reason) {
-        //console.log('onVADComplete', reason);
-        stopRecording();
-      }
-      VAD.setOnComplete(onVADComplete);
 
       // connect stream to our recorder
       sourceNode.connect(scriptprocessor);
@@ -162,35 +187,43 @@ function SpeakToMe(options) {
     };
 
     // MediaRecorder initialization
-    var mediaRecorder = new MediaRecorder(
+    mediaRecorder = new MediaRecorder(
       outputNode.stream,
       options
     );
-
-    function stopRecording() {
-      //console.log("stopRecording");
-      stream.getAudioTracks()[0].stop();
-      mediaRecorder.stop();
-      sourceNode.disconnect(scriptprocessor);
-      sourceNode.disconnect(analyzerNode);
-      analyzerNode.disconnect(outputNode);
-      //console.log("Stopped recording");
-    }
 
     mediaRecorder.start();
 
     // If VAD is disabled, stop recording on a timeout
     if (!config.vad) {
-      setTimeout(stopRecording, config.timeout);
+      setTimeout(stopListening, config.timeout);
     }
 
     mediaRecorder.onstop = function(e) {
-      //console.log('onstop', e.target);
-      //console.log("mediaRecorder onStop");
+      // We stopped the recording, process the results
+      updateState({ state: 'processing'});
 
-      // We stopped the recording, send the content to the STT server.
-      processResult();
+      // No voice detected from VAD
+      if (config.vad && vadReason == 'novoice' ||
+        // Or nothing recorded
+        !chunks[0].size) {
+        updateState({ state: 'result', data: []});
+        updateState({ state: 'ready'});
+      }
+      else {
+        // Create blob from recording, for upload
+        var blob = new Blob(chunks, {
+          type: "audio/ogg; codecs=opus"
+        });
 
+        // Send to server
+        sendRecordingToServer(blob);
+      }
+
+      // Reset recording buffer
+      chunks = [];
+
+      // Clean up
       mediaRecorder = null;
       audioContext = null;
       sourceNode = null;
@@ -206,48 +239,50 @@ function SpeakToMe(options) {
     mediaRecorder.ondataavailable = function(e) {
       chunks.push(e.data);
     };
+  }
 
-    function processResult() {
-      messageListener({ state: 'processing'});
+  function sendRecordingToServer(blob) {
+    updateState({ state: 'sending'});
 
-      // Create blob from recording, for upload
-      var blob = new Blob(chunks, {
-        type: "audio/ogg; codecs=opus"
-      });
+    fetch(config.serverURL, {
+      method: "POST",
+      body: blob
+    })
+    .then(function(response) {
+      return response.json();
+    })
+    .then(function(json) {
+      if (json.status === "ok") {
+        updateState({ state: 'result', data: json.data});
+        updateState({ state: 'ready'});
+      }
+      else {
+        console.error('Error parsing JSON response:', error);
+      }
+    })
+    .catch(function(error) {
+      console.error('Fetch error:', error);
+    });
+  }
 
-      // Reset recording buffer
-      chunks = [];
-
-      messageListener({ state: 'sending'});
-
-      fetch(config.serverURL, {
-        method: "POST",
-        body: blob
-      })
-      .then(function(response) {
-        return response.json();
-      })
-      .then(function(json) {
-        if (json.status === "ok") {
-          messageListener({ state: 'result', data: json.data});
-        }
-        else {
-          console.error('Error parsing JSON response:', error);
-        }
-      })
-      .catch(function(error) {
-        console.error('Fetch error:', error);
-      });
+  function stopListening() {
+    if (state != 'listening') {
+      console.warn("stopListening(): stopping but not listening?!");
+      return;
     }
+
+    mediaStream.getAudioTracks()[0].stop();
+    mediaRecorder.stop();
+    sourceNode.disconnect(scriptprocessor);
+    sourceNode.disconnect(analyzerNode);
+    analyzerNode.disconnect(outputNode);
   }
 
-  // Default result handler - replaced by consumer
-  function resultHandler(data) {
-    console.warn('SpeakToMe: You need to set a result handler with setResultHandler!');
-  }
+  function updateState(msg) {
+    state = msg.state;
 
-  function messageListener(msg) {
     if (!config.listener) {
+      console.warn('SpeakToMe: You need to initialize SpeakToMe with an event listener!');
       return;
     }
 
@@ -262,8 +297,10 @@ function SpeakToMe(options) {
   // Public API
   return {
     listen: listen,
-    // TODO: fixme
-    //stop: stopRecording
+    stop: stopListening,
+    setListener: function(l) {
+      config.listener = l;
+    }
   };
 
 }
