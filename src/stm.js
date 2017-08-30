@@ -2,11 +2,9 @@
 
 TODO:
 
-* support start/stop listen cycles
-* support manual stop listening (overrides others, has timeout)
-* support continuous (throttle api calls)
+* fix VAD re-use
+* add support for continuous listening
 * break out API separate from web, for node env module
-
 
 states/events
 
@@ -121,9 +119,11 @@ function SpeakToMe(options) {
     }
 
     // Lazy init VAD on first-use
+    // TODO: Fix VAD re-use. Fails for some reason on successive use.
+    /*
     if (config.vad && !VAD) {
       function onVADComplete(reason) {
-        //console.log('onVADComplete', reason);
+        console.log('onVADComplete', reason);
         vadReason = reason;
         stopListening();
       }
@@ -131,6 +131,7 @@ function SpeakToMe(options) {
         listener: onVADComplete
       });
     }
+    */
 
     // Configure constraints
     var constraints = { audio: true };
@@ -164,6 +165,17 @@ function SpeakToMe(options) {
     analyzerNode.connect(outputNode);
 
     if (config.vad) {
+      // Initialize VAD
+      // TODO: Re-use VAD instead of initializing on each use.
+      function onVADComplete(reason) {
+        //console.log('onVADComplete', reason);
+        vadReason = reason;
+        stopListening();
+      }
+      VAD = SpeakToMeVAD({
+        listener: onVADComplete
+      });
+
       // Reset last VAD reason
       vadReason = '';
 
